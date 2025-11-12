@@ -41,19 +41,45 @@ Utilizando uma abordagem de persistência poliglota, o CityConnect é uma combin
       - Tem como vantagem uma melhor consistência e suporte a transações, garantindo integridade, segurança e prevenindo dados inconsistentes.
   
   - Por que não as outras?
+    - Redis/MongoDB/Firebase: Não oferecem garantias transacionais ACID tão robustas por padrão nesse contexto. São "overkill" para dados tão simples e fixos.
+
+    - Neo4j: A relação entre usuários não é o foco principal deste microsserviço.
   
 ####  Sistema de Reportes de Problemas
   - Tecnologia: MongoDB (NoSQL - Documentos)
   - Porque MongoDB?
- 
+    - Os reportes são dados não semiestruturados. Buracos, postes queimados, lixo acumulado podem ter atributos comuns (titulo, descrição,localização, fotos), mas tambem podem ter atributos especificos (profundidade do buraco, numero do poste). O MongoDB armazena arquivos JSON, permitindo flexibilidade sem alterar o schema do banco.
+       - Tem como vantagem a escalabilidade horizontal para lidar com grande volume de reportes. Estrutura de documentos é natural para armazenar arrays de fotos(URLs) e objetos de geolocalização (coordenadas lat/long)
+   
+  - Porque não as outras?
+    - SQL: Um schema rígido seria limitante. Para adicionar um novo tipo de problema, seria necessário alterar a tabela, o que é mais lento e complexo.
+
+    - Neo4j/Firebase/Redis: Não são otimizados para armazenar e consultar uma grande coleção de documentos semiestruturados com essa natureza.
+    
 ####  Feed de Notícias da Prefeitura
   - Tecnologia: Firebase Realtime Database ou Firestore
   - Porque Firebase?
-   
+    - O feed de noticias precisa ser compartilhado em tempo real para inumeros usuários, ao mesmo tempo. O firebase tem como especialização a sincronização em tempo real entre servidor e usuários conectados.
+      - Tem como vantagema baixa latência, escalabilidade gerenciada pelo Google, e facilidade de desenvolvimento(SDKs naivo para mobile). Ideal para fluxo de  dados que é mais "lido" e não "escrito"
+  
+  - Porque não as outras?
+    - SQL/MongoDB: São bancos "pull-based" (o app precisa consultar para buscar atualizações), não "push-based" (o servidor envia as atualizações). Implementar notificações em tempo real com eles é mais complexo.
+
+    - Redis: Poderia ser usado como uma camada de cache/pub-sub, mas não como banco principal para persistência de longo prazo das notícias.
+
+    - Neo4j: A estrutura de dados (notícias lineares com timestamp) não é um grafo.
+    
 ####  Base de Conhecimento de Rotas de Transporte Público
   - Tecnologia: Neo4j (NoSQL - Grafos)
   - Porque Neo4j?
+    - O sistema de transporte público é, por natureza, um grafo. As paradas são nós, as linhas de onibus/metrô que se conectam são arestas. Fazer uma consulta de trajeto em grafos é extremamente eficiente.
+    - Performance superior para consulta de relacionamentos complexos e múltiplos saltos(ex: rota da UFSM até o shopping royal, via faixa nova).
     
+  - Porque não as outras?
+    - SQL: Requer junções complexas de múltiplas tabelas (estações, rotas, conexões), que se tornam muito lentas à medida que o número de conexões aumenta (problema do "JOIN bomb").
+
+    - MongoDB/Firebase: Não são projetados para consultas de relacionamentos profundos. A lógica de navegação teria que ser implementada na aplicação, o que é ineficiente.
+
 ---
 
 ## ✨ Principais Funcionalidades
@@ -77,153 +103,27 @@ Utilizando uma abordagem de persistência poliglota, o CityConnect é uma combin
 
 ---
 
-## 🛠️ Tech Stack (recomendado)
+## 🗂️ Modelos de Dados
 
-* Linguagens: Node.js / Python / Go (por serviço, conforme necessidade)
-* Datastores: PostgreSQL (+ PostGIS), MongoDB, Neo4j, Redis, S3/MinIO
-* Mensageria: Kafka ou Redis Streams
-* Deploy: Docker Compose (dev) → Kubernetes (produção)
-* Observability: Prometheus + Grafana, logs centralizados (ELK)
+#### 1) SQL (Postgres + PostGIS) — trecho DDL (Auth)
 
 ---
 
-## 📦 Quickstart — Execução Local (dev)
+#### 2) MongoDB — documento `reports`
 
-**Requisitos:** Docker, Docker Compose
 
-1. Clone o repositório:
-
-```bash
-git clone https://github.com/SEU-ORGANIZACAO/cityconnect.git
-cd cityconnect
-```
-
-2. Iniciar infraestrutura mínima (Postgres+PostGIS, MongoDB, Neo4j, Redis, MinIO):
-
-```bash
-# Exemplo: docker-compose.yml incluído em /deploy/docker-compose.yml
-docker compose -f deploy/docker-compose.yml up -d
-```
-
-3. Criar schemas e dados de exemplo:
-
-```bash
-# SQL DDL para Auth/Postgres
-psql -h localhost -U postgres -d cityconnect -f scripts/sql/ddl_auth.sql
-# Exemplo Mongo: carregar reports de amostra
-mongoimport --uri "mongodb://localhost:27017/cityconnect" --collection reports --file scripts/mongo/sample_reports.json --jsonArray
-# Cypher: popular Neo4j com estações
-cypher-shell -u neo4j -p neo4j "CALL apoc.periodic.iterate(... )"  # ou rodar scripts/cypher/import.cypher
-```
-
-4. Rodar serviços (em containers separados) ou executar localmente em modo desenvolvimento.
-
-> Para conveniência, há um `Makefile` com comandos úteis (`make up`, `make down`, `make seed`).
 
 ---
 
-## 🔐 Configuração e Segurança
+#### 3) Neo4j - criação de nós e relações
 
-* Todas as comunicações devem usar HTTPS em produção.
-* Senhas e segredos em variáveis de ambiente; use um vault (HashiCorp Vault, AWS Secrets Manager).
-* Hashing de senhas: ARGON2 ou BCRYPT.
-* Limites de upload e validação de arquivos para prevenir uploads maliciosos.
-* Política de CORS restritiva e rate-limits por cliente.
-
----
-
-## 🗂️ Modelos de Dados (exemplos)
-
-### 1) SQL (Postgres + PostGIS) — trecho DDL (Auth)
-
-```sql
-CREATE EXTENSION IF NOT EXISTS postgis;
-
-CREATE TABLE municipalities (
-  id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  code TEXT UNIQUE
-);
-
-CREATE TABLE users (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  full_name TEXT,
-  municipality_id INT REFERENCES municipalities(id),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-);
-```
-
----
-
-### 2) MongoDB — exemplo de documento `reports`
-
-```json
-{
-  "title": "Buraco profundo na Av. Central",
-  "description": "Veículos desviando, risco de acidente.",
-  "category": "infrastructure",
-  "status": "submitted",
-  "reporter": { "user_id": 12345, "name": "João Silva" },
-  "location": { "type": "Point", "coordinates": [-53.8, -29.6] },
-  "photos": [ { "url": "https://minio.local/cityconnect/...." } ],
-  "created_at": "2025-11-01T12:30:00Z"
-}
-```
-
----
-
-### 3) Neo4j (Cypher) — exemplo de criação de nós e relações
-
-```cypher
-CREATE (s1:Station {id: 'S001', name: 'Central', lat:-29.6, lon:-53.8});
-CREATE (s2:Station {id: 'S002', name: 'Sete de Setembro', lat:-29.601, lon:-53.805});
-CREATE (s1)-[:CONNECTS_TO {travel_time: 3, distance: 400}]->(s2);
-```
-
----
-
-## 📡 Endpoints Principais (exemplos)
-
-* `POST /api/v1/auth/register` — registrar usuário
-* `POST /api/v1/auth/login` — obter JWT
-* `POST /api/v1/reports` — criar report (multipart/form-data com fotos)
-* `GET /api/v1/reports?near=lat,lon&radius=500` — reports próximos
-* `GET /api/v1/transport/route?from=ID1&to=ID2` — obter rota entre estações
-
-> Uma collection Postman / Insomnia está disponível em `/tools/postman/cityconnect.postman_collection.json`.
-
----
-
-## ✅ Testes e Qualidade
-
-* Testes unitários por serviço (pytest / jest / go test)
-* Testes de integração contra containers (docker-compose)
-* CI: pipeline para lint, testes e build de imagens (GitHub Actions / GitLab CI)
-
----
-
-## 📈 Observability
-
-* Métricas: Prometheus + Grafana
-* Tracing distribuído: OpenTelemetry
-* Logs centralizados: ELK (Elasticsearch / Logstash / Kibana) ou Loki + Grafana
-
----
-
-## ♻️ Estratégia de Deploy
-
-* Ambiente dev: Docker Compose (scripts em `deploy/`)
-* Produção: Kubernetes (Helm charts), usar serviços gerenciados para bancos (RDS, Mongo Atlas, Neo4j Aura)
-* CI/CD: pipelines para build, testes, imagem e deploy automático em staging/production
 
 ---
 
 ## 📚 Recursos e Referências
 
-
 * Documentação oficial: PostgreSQL, MongoDB, Firebase, Neo4j
 * Padrões de persistência poliglota
 * Melhores práticas para arquitetura de microsserviços
+
 ---
