@@ -7,7 +7,7 @@
 ---
 ## 📋 Sobre o Trabalho
 
-Disciplina: Ciência de Dados I / 25-2
+Disciplina: Ciência de Dados I - 25/2
 
 Professor: Dr. Gabriel Machado Lunardi
 
